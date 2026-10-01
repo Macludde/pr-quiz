@@ -1,0 +1,158 @@
+{
+  "repo": "honojs/hono",
+  "pr": 5351,
+  "base": "main",
+  "sha": "267473b47d4bed1b4c95ddaf6bb5d0bfc8661c70",
+  "title": "fix(aws-lambda): respect backpressure when streaming the response body",
+  "questions": [
+    {
+      "kind": "runtime",
+      "q": "`streamHandle` calls `awslambda.streamifyResponse` without importing anything. What supplies `awslambda`, and what is `responseStream`?",
+      "correct": "A global from Lambda's Node runtime; `responseStream` is a Node `Writable`",
+      "distractors": [
+        "The `@aws-sdk/client-lambda` package; `responseStream` is a web `WritableStream`",
+        "A polyfill inside Hono's adapter; `responseStream` wraps the app's `Response`",
+        "API Gateway injects it per request; `responseStream` is the raw TCP socket"
+      ],
+      "diagram": "flowchart TD\n  G[\"Lambda runtime: global awslambda\"]:::hit\n  G --> F[\"Hono: app.fetch(req)\"]\n  F --> B[\"res.body: web ReadableStream\"]\n  B -->|\"pipeline()\"| W[\"responseStream: Node Writable\"]\n  W --> R[\"Lambda runtime streams it out\"]\n  classDef hit stroke:#e8590c,stroke-width:3px",
+      "why": "The Lambda Node runtime defines `awslambda` as a global and hands the handler a Node `Writable`; the test fakes both with `vi.stubGlobal`. That is why the body must be bridged from a web stream to a Node stream at all.",
+      "evidence": [
+        {
+          "path": "src/adapter/aws-lambda/handler.ts",
+          "from": 149,
+          "to": 151
+        },
+        {
+          "path": "runtime-tests/lambda/stream-backpressure.test.ts",
+          "from": 6,
+          "to": 13
+        }
+      ]
+    },
+    {
+      "kind": "architecture",
+      "q": "After this PR, a body finishes cleanly. Which call actually ends `responseStream`, and what does the `finally` block's `end()` do?",
+      "correct": "`pipeline` ends it once the generator returns; the later `end()` is a no-op",
+      "distractors": [
+        "`readWebStream` ends it after its last `yield`; `pipeline` only paces reads",
+        "Only the `finally` block's `end()` does; `pipeline` never calls `end()`",
+        "The Lambda runtime ends it when the handler's promise resolves"
+      ],
+      "diagram": "sequenceDiagram\n  participant P as pipeline\n  participant W as stream\n  P->>W: write per yield\n  P->>W: end() after last yield\n  W-->>P: finish\n  Note over P: resolves the handler\n  Note over W: finally end(): no-op",
+      "why": "`pipeline` ends the destination when the source is exhausted and resolves only on `finish`. The `finally` call then hits a finished stream, which Node ignores when no callback is passed. `readWebStream` only yields; it never sees the writer.",
+      "evidence": [
+        {
+          "path": "src/adapter/aws-lambda/handler.ts",
+          "from": 127,
+          "to": 140
+        },
+        {
+          "path": "src/adapter/aws-lambda/handler.ts",
+          "from": 184,
+          "to": 194
+        }
+      ]
+    },
+    {
+      "kind": "behavior",
+      "q": "`res.body` is 2 MiB and the Lambda stream's `write()` returns `false` after the first chunk. What does this code do next?",
+      "code": {
+        "path": "src/adapter/aws-lambda/handler.ts",
+        "from": 127,
+        "to": 140
+      },
+      "correct": "The generator waits at `yield`; no `reader.read()` until `drain`",
+      "distractors": [
+        "Keeps reading and writing; chunks pile up in the writable's buffer",
+        "Keeps reading; chunks queue inside the web stream until `drain`",
+        "Drops chunks until `drain`, then resumes with the next chunk read"
+      ],
+      "diagram": "sequenceDiagram\n  participant P as pipeline\n  participant W as stream\n  Note over P: generator yields chunk 1\n  P->>W: write() is false\n  Note over P: generator paused at yield\n  W-->>P: drain\n  Note over P: next() reads chunk 2",
+      "why": "`pipeline` pulls the generator only when the destination has room, so `reader.read()` waits for `drain`. The first option is exactly the pre-PR loop, which ignored `write()`'s return value.",
+      "evidence": [
+        {
+          "path": "src/adapter/aws-lambda/handler.ts",
+          "from": 127,
+          "to": 140
+        },
+        {
+          "path": "runtime-tests/lambda/stream-backpressure.test.ts",
+          "from": 57,
+          "to": 74
+        }
+      ]
+    },
+    {
+      "kind": "decision",
+      "q": "Why route the body through `pipeline` instead of keeping the loop and awaiting `'drain'` whenever `write()` returns `false`?",
+      "correct": "Awaiting `drain` paces writes but still resolves before `finish`",
+      "distractors": [
+        "Lambda's `HttpResponseStream` never emits `drain`, so the loop would hang",
+        "`pipeline` coalesces small chunks, which cuts Lambda's per-write billing",
+        "`drain` needs Node 20, while `pipeline` runs on older Lambda runtimes"
+      ],
+      "diagram": "flowchart TD\n  S[\"write() returns false\"] --> A[\"loop awaits drain\"]\n  S --> P[\"pipeline(generator, writer)\"]:::hit\n  A --> A1[\"end(), resolve before finish\"]\n  P --> P1[\"resolve on finish\"]\n  P1 --> P2[\"errors destroy both sides\"]\n  classDef hit stroke:#e8590c,stroke-width:3px",
+      "why": "The bug had two halves: no pacing, and resolving after `end()` but before `finish`, which can end the invocation before delivery. A drain loop fixes only the first; `pipeline` also awaits `finish` and propagates errors from both ends.",
+      "evidence": [
+        {
+          "path": "src/adapter/aws-lambda/handler.ts",
+          "from": 137,
+          "to": 140
+        },
+        {
+          "path": "runtime-tests/lambda/stream-backpressure.test.ts",
+          "from": 69,
+          "to": 74
+        }
+      ]
+    },
+    {
+      "kind": "behavior",
+      "q": "The body sends `chunk1;` and then errors. Before this PR the client got `chunk1;Internal Server Error`. What does it get now?",
+      "correct": "Just `chunk1;`: the stream is destroyed, so the catch block's write is lost",
+      "distractors": [
+        "`chunk1;Internal Server Error`, as before; the catch block still writes",
+        "A 500 status with `Internal Server Error`, replacing the 200 response",
+        "Nothing at all: `pipeline` holds the body back and discards it on error"
+      ],
+      "diagram": "sequenceDiagram\n  participant P as pipeline\n  participant W as stream\n  P->>W: write chunk1;\n  Note over P: body errors\n  P->>W: destroy(err)\n  Note over W: destroyed\n  P->>W: catch: write ISE\n  Note over W: dropped",
+      "why": "On error `pipeline` destroys the destination, and Node drops a `write()` or `end()` on a destroyed stream. The 200 already went out with the first bytes. The new test checks only that the handler logs and resolves, so this change passes unnoticed.",
+      "evidence": [
+        {
+          "path": "src/adapter/aws-lambda/handler.ts",
+          "from": 184,
+          "to": 194
+        },
+        {
+          "path": "runtime-tests/lambda/stream-backpressure.test.ts",
+          "from": 76,
+          "to": 106
+        }
+      ]
+    },
+    {
+      "kind": "failure",
+      "q": "A client disconnects from a `streamSSE` response and `responseStream` errors. What happens to the app's body stream?",
+      "correct": "Reads stop, but the body is never cancelled, so `onAbort` never fires",
+      "distractors": [
+        "`pipeline` cancels the body, so `onAbort` callbacks run as usual",
+        "Reads continue to the end, filling the dead stream's internal buffer",
+        "The handler rejects, and Lambda retries the whole invocation"
+      ],
+      "diagram": "flowchart TD\n  C[\"client disconnects\"] --> W[\"responseStream errors\"]\n  W --> P[\"pipeline rejects\"]\n  P --> G[\"generator dropped at yield\"]\n  G --> X[\"reader.cancel() never called\"]:::hit\n  X --> Y[\"StreamingApi.abort() never runs\"]\n  classDef hit stroke:#e8590c,stroke-width:3px",
+      "why": "`readWebStream` has no `finally` that calls `reader.cancel()`, so the body stays locked and its `cancel` hook, the only path to `abort()`, never runs. Backpressure does stop the reads; reading on was the old loop.",
+      "evidence": [
+        {
+          "path": "src/adapter/aws-lambda/handler.ts",
+          "from": 127,
+          "to": 140
+        },
+        {
+          "path": "src/utils/stream.ts",
+          "from": 35,
+          "to": 45
+        }
+      ]
+    }
+  ]
+}

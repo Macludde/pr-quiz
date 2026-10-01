@@ -298,7 +298,8 @@ export function markdown(quiz, items, url) {
 
 export function html(quiz, items) {
   const tpl = readFileSync(join(HERE, "../templates/quiz.html"), "utf8");
-  const data = JSON.stringify({ title: quiz.title, repo: quiz.repo, pr: quiz.pr, sha: quiz.sha, items }).replace(/</g, "\\u003c");
+  const home = flags.home === true ? null : (flags.home ?? "../../../");
+  const data = JSON.stringify({ title: quiz.title, repo: quiz.repo, pr: quiz.pr, sha: quiz.sha, home, items }).replace(/</g, "\\u003c");
   return tpl.replace("/*__QUIZ__*/null", data).replace("__TITLE__", quiz.title.replace(/[<&]/g, (c) => (c === "<" ? "&lt;" : "&amp;")));
 }
 
@@ -318,7 +319,7 @@ function upsertComment(quiz, body, outDir) {
 
 async function main() {
   if (!["lint", "render", "post"].includes(cmd) || !quizPath) {
-    console.error("usage: quiz.mjs lint|render|post <quiz.json> [outDir] [--dry-run] [--no-link] [--cwd=<repo>]");
+    console.error("usage: quiz.mjs lint|render|post <quiz.json> [outDir] [--dry-run] [--no-link] [--home=<url>] [--cwd=<repo>]");
     process.exit(2);
   }
   const quiz = JSON.parse(readFileSync(quizPath, "utf8"));

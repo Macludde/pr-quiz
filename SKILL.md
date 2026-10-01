@@ -38,7 +38,7 @@ Prefer `behavior` and `failure`: predicting an outcome forces reading the code. 
 - **`diagram`** (required): raw Mermaid without a fence that shows *why* the answer is right. Mark the deciding step `:::hit` and add `classDef hit stroke:#e8590c,stroke-width:3px` (or a `Note` in a sequence).
   - `flowchart TD`, `sequenceDiagram` or `stateDiagram-v2`; never LR, which overflows a phone.
   - ≤ 14 lines, labels ≤ 32 chars, ≤ 4 participants, messages ≤ 40 chars.
-  - Width (≤ 640 px rendered) is the limit that binds. Sequence diagrams fit 2–3 participants with messages of about 20 chars. A flowchart fits 2 parallel branches with one node each before they rejoin. When a flow won't fit, make it a vertical chain.
+  - Width (≤ 640 px rendered) is the limit that binds. Sequence diagrams fit 2 participants with messages of about 20 chars; a third participant alone pushes them to 650 px, so move it into a `Note`. A flowchart fits 2 parallel branches with one node each before they rejoin. When a flow won't fit, make it a vertical chain.
   - Quote any label that contains punctuation: `A["recoverBody()"]`.
 - **`why`** ≤ 260 chars: the mechanism in one sentence, the trap behind the most tempting distractor in another. The diagram carries the flow, so don't narrate it.
 - **`evidence`**: `{path, from, to}` ranges at the SHA (≤ 80 lines) that prove the answer.

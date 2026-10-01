@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pr-quiz · prove you read the PR</title>
+<meta name="description" content="An agent skill for Claude Code and Codex that writes a short multiple-choice quiz about a pull request's code and posts it as a PR comment.">
+<style>
+  :root {
+    --bg: #f6f4ef; --card: #fffdf8; --ink: #1d1b16; --soft: #6b665b; --line: #e4dfd3;
+    --ok: #1f7a5a; --okbg: #e3f3ec; --bad: #b23a2e; --accent: #2c5bd6; --hit: #e8590c; --code: #f1eee6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15161a; --card: #1d1f24; --ink: #ecebe6; --soft: #9a988f; --line: #2d3037;
+      --ok: #5fd0a3; --okbg: #17342a; --bad: #f08a7e; --accent: #8fb0ff; --hit: #ff8a4c; --code: #24272d; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.55 Inter, ui-sans-serif, system-ui, sans-serif; }
+  a { color: var(--accent); }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  code { font-size: .88em; background: var(--code); padding: 1px 5px; border-radius: 5px; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+  .hero { display: grid; grid-template-columns: 1fr 380px; gap: 56px; align-items: center; padding: 72px 0 56px; }
+  .eyebrow { font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+  h1 { font-size: 52px; line-height: 1.05; letter-spacing: -.02em; margin: 10px 0 18px; }
+  .lede { font-size: 20px; color: var(--soft); margin: 0 0 28px; max-width: 34ch; }
+  .cta { display: flex; gap: 12px; flex-wrap: wrap; }
+  .btn { display: inline-block; padding: 12px 20px; border-radius: 10px; font-weight: 600; text-decoration: none; border: 1.5px solid var(--ink); }
+  .btn.primary { background: var(--ink); color: var(--bg); }
+  .btn.ghost { color: var(--ink); }
+  .note { margin-top: 18px; font-size: 14px; color: var(--soft); }
+
+  .phone { justify-self: center; width: 380px; height: 760px; border-radius: 44px; padding: 12px; background: #111; box-shadow: 0 30px 60px -20px rgba(0,0,0,.35), inset 0 0 0 2px #333; }
+  .phone iframe { width: 100%; height: 100%; border: 0; border-radius: 34px; background: var(--bg); }
+
+  section { padding: 56px 0; border-top: 1px solid var(--line); }
+  h2 { font-size: 30px; letter-spacing: -.01em; margin: 0 0 8px; }
+  .sub { color: var(--soft); margin: 0 0 32px; max-width: 60ch; }
+
+  .flowbox { overflow-x: auto; }
+  .flow { width: 100%; min-width: 760px; height: auto; display: block; }
+  .crop { display: block; max-height: 620px; overflow: hidden; border-radius: 10px; border: 1px solid var(--line); -webkit-mask-image: linear-gradient(#000 85%, transparent); mask-image: linear-gradient(#000 85%, transparent); }
+  .crop img { width: 100%; display: block; }
+  .flow .box { fill: var(--card); stroke: var(--line); stroke-width: 1.5; }
+  .flow .box.hit { stroke: var(--hit); stroke-width: 3; }
+  .flow .t { fill: var(--ink); font: 600 15px Inter, ui-sans-serif, system-ui, sans-serif; }
+  .flow .s { fill: var(--soft); font: 13px Inter, ui-sans-serif, system-ui, sans-serif; }
+  .flow .m { fill: var(--soft); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .flow .edge { stroke: var(--soft); stroke-width: 1.5; fill: none; marker-end: url(#arr); }
+  .flow .fail { stroke: var(--bad); stroke-dasharray: 5 4; }
+  .flow .ft { fill: var(--bad); font: 600 12px Inter, ui-sans-serif, system-ui, sans-serif; }
+
+  .kinds { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .kind { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+  .kind b { display: block; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin-bottom: 6px; }
+  .kind p { margin: 0 0 12px; }
+  .kind svg { display: block; height: 64px; width: 100%; }
+  .kind svg .n { fill: var(--card); stroke: var(--soft); stroke-width: 1.4; }
+  .kind svg .h { stroke: var(--hit); stroke-width: 2.6; }
+  .kind svg .e { stroke: var(--soft); stroke-width: 1.4; fill: none; }
+  .kind svg .g { fill: none; stroke: var(--line); stroke-width: 1.4; stroke-dasharray: 4 3; }
+  .req { font-size: 11px; font-weight: 700; color: var(--soft); margin-left: 6px; letter-spacing: .04em; }
+
+  .shots { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
+  .shot { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+  .shot h3 { margin: 0 0 6px; font-size: 18px; }
+  .shot p { margin: 0 0 14px; color: var(--soft); }
+  .comment { font-size: 15px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .comment .bar { background: var(--code); padding: 8px 12px; font-size: 13px; color: var(--soft); border-bottom: 1px solid var(--line); }
+  .comment .body { padding: 14px 16px; }
+  .comment h4 { margin: 0 0 6px; font-size: 18px; }
+  .comment .q { font-weight: 600; margin: 14px 0 6px; }
+  .comment ul { margin: 0; padding-left: 18px; }
+  .comment details { margin-top: 8px; border-top: 1px dashed var(--line); padding-top: 8px; }
+  .comment summary { cursor: pointer; font-weight: 600; }
+
+  .tabs { display: flex; gap: 6px; margin-bottom: -1px; }
+  .tab { all: unset; cursor: pointer; padding: 9px 16px; border: 1px solid var(--line); border-bottom: 0; border-radius: 10px 10px 0 0; color: var(--soft); font-weight: 600; background: var(--bg); }
+  .tab[aria-selected="true"] { background: var(--card); color: var(--ink); }
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 0 12px 12px 12px; padding: 20px; }
+  .panel[hidden] { display: none; }
+  .panel pre { margin: 0 0 14px; background: var(--code); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; overflow-x: auto; font-size: 14px; line-height: 1.6; }
+  .panel p { margin: 0 0 12px; }
+  .panel p:last-child { margin: 0; }
+
+  footer { padding: 32px 0 56px; color: var(--soft); font-size: 14px; border-top: 1px solid var(--line); }
+
+  @media (max-width: 860px) {
+    .hero { grid-template-columns: 1fr; padding-top: 40px; gap: 36px; }
+    h1 { font-size: 40px; }
+    .phone { width: min(380px, 100%); height: 700px; }
+    .kinds, .shots { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hero">
+    <div>
+      <div class="eyebrow">Agent skill · Claude Code &amp; Codex</div>
+      <h1>Prove you read the PR before you approve it.</h1>
+      <p class="lede">Agent-written code gets merged unread. <b>pr-quiz</b> has your agent write 5–7 multiple-choice questions about the code itself. A skimmer gets them wrong; a reader gets them right.</p>
+      <div class="cta">
+        <a class="btn primary" href="demo/">Play the demo →</a>
+        <a class="btn ghost" href="https://github.com/Macludde/pr-quiz#install">Install</a>
+      </div>
+      <p class="note">The demo quizzes <a href="https://github.com/honojs/hono/pull/5351">honojs/hono#5351</a>, which adds backpressure to the AWS Lambda streaming adapter. Two of its answers are consequences the PR description doesn't mention.</p>
+    </div>
+    <div class="phone"><iframe src="demo/" title="Live demo quiz"></iframe></div>
+  </div>
+
+  <section>
+    <h2>How it works</h2>
+    <p class="sub">The agent reads the diff, every changed file and one hop of callers and callees, then writes <code>quiz.json</code>. A strict linter rejects lazy quizzes before anything is posted.</p>
+    <div class="flowbox"><svg class="flow" viewBox="0 0 1032 250" role="img" aria-label="PR to agent to linter to page and comment">
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor" style="color:var(--soft)"/></marker></defs>
+      <rect class="box" x="0" y="40" width="180" height="96" rx="12"/>
+      <text class="t" x="20" y="74">Pull request</text>
+      <text class="m" x="20" y="98">diff @ head SHA</text>
+      <text class="m" x="20" y="118">+ callers, callees</text>
+
+      <path class="edge" d="M184 88 H246"/>
+      <rect class="box" x="250" y="40" width="200" height="96" rx="12"/>
+      <text class="t" x="270" y="74">Agent writes</text>
+      <text class="m" x="270" y="98">quiz.json</text>
+      <text class="s" x="270" y="118">q · options · diagram · why</text>
+
+      <path class="edge" d="M454 88 H516"/>
+      <rect class="box hit" x="520" y="20" width="230" height="136" rx="12"/>
+      <text class="t" x="540" y="52">quiz.mjs lint</text>
+      <text class="s" x="540" y="76">required question kinds</text>
+      <text class="s" x="540" y="96">no length tell on the answer</text>
+      <text class="s" x="540" y="116">evidence lines exist at SHA</text>
+      <text class="s" x="540" y="136">diagrams render, ≤ 640 px</text>
+
+      <path class="edge fail" d="M600 160 C600 225, 350 225, 350 140"/>
+      <text class="ft" x="400" y="232">FAIL → fix the quiz, never the linter</text>
+
+      <path class="edge" d="M754 64 H816"/>
+      <path class="edge" d="M754 112 C785 112, 785 176, 816 176"/>
+      <rect class="box" x="820" y="20" width="212" height="88" rx="12"/>
+      <text class="t" x="840" y="52">Phone-friendly page</text>
+      <text class="s" x="840" y="76">one question at a time,</text>
+      <text class="s" x="840" y="94">scores saved per device</text>
+      <rect class="box" x="820" y="132" width="212" height="88" rx="12"/>
+      <text class="t" x="840" y="164">One PR comment</text>
+      <text class="s" x="840" y="188">answers folded away,</text>
+      <text class="s" x="840" y="206">updated on re-run</text>
+    </svg></div>
+  </section>
+
+  <section>
+    <h2>Six kinds of question</h2>
+    <p class="sub">Each answer is a Mermaid diagram with the deciding step outlined, one or two sentences, and permalinks to the exact lines.</p>
+    <div class="kinds">
+      <div class="kind"><b>Where it runs<span class="req">REQUIRED</span></b><p>Which process runs this; what crosses which boundary?</p>
+        <svg viewBox="0 0 300 64"><rect class="g" x="2" y="4" width="130" height="56" rx="8"/><rect class="g" x="168" y="4" width="130" height="56" rx="8"/><rect class="n" x="30" y="20" width="74" height="24" rx="5"/><rect class="n h" x="196" y="20" width="74" height="24" rx="5"/><path class="e" d="M104 32H196"/></svg></div>
+      <div class="kind"><b>Architecture<span class="req">REQUIRED</span></b><p>Who owns the behaviour, the call order, where state lives.</p>
+        <svg viewBox="0 0 300 64"><rect class="n" x="10" y="20" width="60" height="24" rx="5"/><rect class="n h" x="120" y="20" width="60" height="24" rx="5"/><rect class="n" x="230" y="20" width="60" height="24" rx="5"/><path class="e" d="M70 32H120M180 32H230"/></svg></div>
+      <div class="kind"><b>Design decision<span class="req">REQUIRED</span></b><p>Why this over the obvious alternative; what forced it.</p>
+        <svg viewBox="0 0 300 64"><rect class="n" x="120" y="2" width="60" height="20" rx="5"/><rect class="n" x="40" y="42" width="80" height="20" rx="5"/><rect class="n h" x="180" y="42" width="80" height="20" rx="5"/><path class="e" d="M140 22L80 42M160 22L220 42"/></svg></div>
+      <div class="kind"><b>Behaviour</b><p>Given X while Y, what happens? Predicting forces reading.</p>
+        <svg viewBox="0 0 300 64"><path class="e" d="M70 4V60M230 4V60"/><path class="e" d="M70 18H226"/><path class="e h" d="M230 34H74"/><path class="e" d="M70 50H226"/></svg></div>
+      <div class="kind"><b>Known issue<span class="req">REQUIRED</span></b><p>What is still unhandled; what breaks if an invariant fails.</p>
+        <svg viewBox="0 0 300 64"><rect class="n" x="10" y="20" width="60" height="24" rx="5"/><rect class="n" x="120" y="20" width="60" height="24" rx="5"/><rect class="n h" x="230" y="20" width="60" height="24" rx="5" style="stroke-dasharray:5 3"/><path class="e" d="M70 32H120M180 32H230"/></svg></div>
+      <div class="kind"><b>Contract</b><p>Which invariant, test, flag or compatibility rule protects this.</p>
+        <svg viewBox="0 0 300 64"><circle class="n" cx="50" cy="32" r="14"/><circle class="n h" cx="150" cy="32" r="14"/><circle class="n" cx="250" cy="32" r="14"/><path class="e" d="M64 32H136M164 32H236"/></svg></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Two places to take it</h2>
+    <p class="sub">The same quiz renders twice: a hosted page for your phone, and a comment on the PR itself.</p>
+    <div class="shots">
+      <div class="shot">
+        <h3>The page</h3>
+        <p>Pick, then see the diagram and the lines that prove it. Keyboard: A–D, Enter.</p>
+        <a class="crop" href="demo/"><img src="img/answer-light.png" alt="Answered question with diagram"></a>
+      </div>
+      <div class="shot">
+        <h3>The PR comment</h3>
+        <p>GitHub renders the Mermaid. <a href="https://github.com/Macludde/pr-quiz/blob/main/docs/demo/comment.md">See the full demo comment</a>.</p>
+        <div class="comment">
+          <div class="bar">pr-quiz commented</div>
+          <div class="body">
+            <h4>Quiz: do you own this PR?</h4>
+            <div><a href="demo/">Play it →</a> · 6 questions · pick before you open the answer</div>
+            <div class="q">6 · Known issue</div>
+            <div>A client disconnects from a <code>streamSSE</code> response and <code>responseStream</code> errors. What happens to the app's body stream?</div>
+            <ul>
+              <li><b>A.</b> <code>pipeline</code> cancels the body, so <code>onAbort</code> callbacks run as usual</li>
+              <li><b>B.</b> Reads continue to the end, filling the dead stream's internal buffer</li>
+              <li><b>C.</b> Reads stop, but the body is never cancelled, so <code>onAbort</code> never fires</li>
+              <li><b>D.</b> The handler rejects, and Lambda retries the whole invocation</li>
+            </ul>
+            <details><summary>Answer</summary><p><b>C.</b> <code>readWebStream</code> has no <code>finally</code> that calls <code>reader.cancel()</code>, so the body's <code>cancel</code> hook, the only path to <code>abort()</code>, never runs.</p></details>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="install">
+    <h2>Install</h2>
+    <p class="sub">Needs Node 18+, <code>git</code> and an authenticated <code>gh</code>. Playwright is optional; it render-checks the diagrams.</p>
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" aria-selected="true" data-p="claude">Claude Code</button>
+      <button class="tab" role="tab" aria-selected="false" data-p="codex">Codex</button>
+      <button class="tab" role="tab" aria-selected="false" data-p="both">Both</button>
+    </div>
+    <div class="panel" id="claude">
+<pre>git clone https://github.com/Macludde/pr-quiz ~/.claude/skills/pr-quiz
+cd ~/.claude/skills/pr-quiz && npm i && npx playwright install chromium</pre>
+      <p>Then, on a branch with an open PR: <code>/pr-quiz</code>, or ask “quiz me on PR 123”.</p>
+    </div>
+    <div class="panel" id="codex" hidden>
+<pre>git clone https://github.com/Macludde/pr-quiz ~/.codex/skills/pr-quiz
+cd ~/.codex/skills/pr-quiz && npm i && npx playwright install chromium</pre>
+      <p>Then ask Codex to “use the pr-quiz skill on PR 123”.</p>
+    </div>
+    <div class="panel" id="both" hidden>
+<pre>git clone https://github.com/Macludde/pr-quiz ~/.agents/skills/pr-quiz
+cd ~/.agents/skills/pr-quiz && npm i && npx playwright install chromium
+mkdir -p ~/.claude/skills ~/.codex/skills
+ln -s ~/.agents/skills/pr-quiz ~/.claude/skills/pr-quiz
+ln -s ~/.agents/skills/pr-quiz ~/.codex/skills/pr-quiz</pre>
+      <p>One checkout, one <code>git pull</code> to update both.</p>
+    </div>
+    <p class="note">Hosting the page for your phone is optional; see <a href="https://github.com/Macludde/pr-quiz#hosting-the-page-optional">the README</a>.</p>
+  </section>
+</div>
+<footer><div class="wrap"><a href="https://github.com/Macludde/pr-quiz">github.com/Macludde/pr-quiz</a></div></footer>
+<script>
+document.querySelectorAll(".tab").forEach((t) => t.onclick = () => {
+  document.querySelectorAll(".tab").forEach((x) => x.setAttribute("aria-selected", x === t));
+  document.querySelectorAll(".panel").forEach((p) => p.hidden = p.id !== t.dataset.p);
+});
+</script>
+</body>
+</html>
